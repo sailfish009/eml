@@ -15,7 +15,7 @@ The `eml` primitive is interesting because shallow compositions of it can approx
 No package yet. Drop `eml.py` into your project.
 
 ```bash
-curl -O https://raw.githubusercontent.com/<user>/<repo>/main/eml.py
+curl -O https://raw.githubusercontent.com/sailfish009/eml/main/eml.py
 ```
 
 Requires numpy only.
