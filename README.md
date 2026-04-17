@@ -163,8 +163,6 @@ The goal is a clean substrate for experimenting with the `eml` primitive and tre
 
 ## Background
 
-## Background
-
 The `eml` primitive is introduced and motivated in [this paper](https://arxiv.org/pdf/2603.21852v2), which proposes that a single two-argument real function can play a role for continuous mathematics analogous to what NAND plays for Boolean logic. This repository is one concrete, minimal playground for exploring that claim through learning.
 
 ## License
