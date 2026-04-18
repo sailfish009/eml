@@ -30,12 +30,10 @@ import numpy as np
 X = np.random.uniform(-3, 3, size=(300, 1))
 y = 1.0 / (1.0 + np.exp(-X[:, 0]))
 
-# Define architecture: 1 / (1 + eml(-x, c))
+# Define architecture: 1 / (1 + eml(-x, c)) with non-ideal initial constants
 x = T.var(0)
-model = T.div(
-    T.const(1.0),
-    T.add(T.const(1.0), T.eml(T.neg(x), T.const(1.0)))
-)
+inner = T.eml(T.neg(x), T.const(0.3))
+model = T.div(T.const(0.5), T.add(T.const(2.0), T.tree_ref(inner)))
 
 # Fit constants with Adam
 trained = T.fit(model, X, y, steps=500)
@@ -47,11 +45,11 @@ print(f"R^2 = {T.r2_score(trained, X, y):.4f}")
 Output:
 
 ```
-(1.006 / (1.017 + eml((-x0),1.01)))
+(1.006 / (1.206 + <eml((-x0),1.22)>))
 R^2 = 0.9963
 ```
 
-The three `const` nodes moved from their initial `1.0` values to `1.006`, `1.017`, `1.01` — reconstructing `sigmoid(x)` from the `eml` primitive.
+The three `const` nodes converge to values that reconstruct `sigmoid(x)` from the `eml` primitive.
 
 ## Core concepts
 
@@ -98,6 +96,39 @@ Pretty-printed, composed trees appear inside `< >`:
 (<eml(x0,1)> * x0)
 ```
 
+### Encoder + predictor (vector-valued trees)
+
+For building small models in the spirit of world models — an encoder that maps inputs to a latent representation, and a predictor that consumes the latent — the library provides `TreeList` and `fit_ep`.
+
+```python
+# Encoder: 4 input features → 2-dim latent
+encoder = T.TreeList([
+    T.add(T.mul(T.const(0.5), T.var(0)),
+          T.mul(T.var(1), T.var(2))),     # latent[0]
+    T.mul(T.const(1.0), T.var(3)),         # latent[1]
+])
+
+# Predictor: latent → scalar.  var(j) inside predictor reads latent[j].
+sig_inner = T.eml(T.neg(T.var(0)), T.const(1.0))
+sig_term  = T.div(T.const(1.0), T.add(T.const(1.0), T.tree_ref(sig_inner)))
+predictor = T.add(sig_term, T.mul(T.const(0.5), T.var(1)))
+
+# Joint training with anti-collapse regularization on the latent
+enc_t, pred_t = T.fit_ep(encoder, predictor, X, y,
+                         steps=600, lr=0.05, lambd=0.05)
+
+y_pred = T.predict_ep(enc_t, pred_t, X)
+Z      = T.encode(enc_t, X)   # latent only
+```
+
+The encoder is a `TreeList` (a bundle of k scalar trees, producing a k-dim vector). The predictor is a single scalar tree whose `var(j)` reads the j-th latent dimension. Training minimises
+
+```
+MSE(predictor(encoder(X)), y)  +  lambd * SIGReg(encoder(X))
+```
+
+where `SIGReg` pushes the latent distribution toward a standard normal via characteristic-function matching on random 1D projections. This prevents the encoder from collapsing to a constant or low-rank representation.
+
 ## API
 
 ### Builders
@@ -113,6 +144,7 @@ Pretty-printed, composed trees appear inside `< >`:
 | `div(a, b)` | `a / b` (with small denominator guard) |
 | `eml(a, b)` | `exp(a) − log|b|` |
 | `tree_ref(inner)` | use `inner` as an atom |
+| `TreeList(trees)` | bundle of k scalar trees with vector output |
 
 ### Training and inference
 
@@ -122,8 +154,12 @@ Pretty-printed, composed trees appear inside `< >`:
 | `predict(tree, X)` | forward evaluation |
 | `r2_score(tree, X, y)` | coefficient of determination |
 | `trainable_count(tree)` | number of `const` nodes |
+| `fit_ep(encoder, predictor, X, y, steps, lr, lambd)` | joint training with SIGReg |
+| `predict_ep(encoder, predictor, X)` | encoder → predictor forward |
+| `encode(encoder, X)` | encoder forward only (returns latent) |
+| `sigreg(Z, M, seed)` | SIGReg value on a latent batch |
 
-`fit` returns a new tree; the caller's tree is not mutated.
+`fit` and `fit_ep` return new trees; the caller's trees are not mutated.
 
 ## Examples
 
@@ -146,12 +182,17 @@ A single `eml` node, two constants, approximates softplus over a practical range
 
 With the same primitive set, `x² if x > 0 else −x` is recoverable as an `eml(c·x, ...) · x` idiom, where the `eml` factor dominates in one half and is suppressed in the other. Branch selection is implicit in the arithmetic.
 
+### Encoder + predictor with non-degenerate latent
+
+On synthetic data where the target is `sigmoid(x₀ + x₁·x₂) + 0.5·x₃`, a 4→2→1 encoder+predictor configuration trained with `fit_ep` reaches R² ≈ 0.98. During training the SIGReg term decreases while latent variance grows — the opposite of collapse.
+
 ## Design notes
 
-- **Functional API.** Builders return new nodes. Trees are treated as mostly immutable; `fit` clones before modifying.
-- **Shared theta.** All constants across composed trees live in a single 1-D `theta`. This is what makes tree-as-atom coherent — inner and outer are trained together.
+- **Functional API.** Builders return new nodes. Trees are treated as mostly immutable; `fit` and `fit_ep` clone before modifying.
+- **Shared theta.** All constants across composed trees (including TreeLists and nested refs) live in a single 1-D `theta`. Encoder and predictor train together in one optimisation problem.
+- **Gradient chain through the latent.** `fit_ep` propagates both the prediction error and the SIGReg gradient back through the encoder's constants. This requires a small "variable-gradient" pass in addition to the usual "constant-gradient" pass.
 - **Safe numerics.** `exp` is clipped, `log` uses `|·|` plus small `eps`, `/` guards its denominator. These guards preserve gradient flow; they are not exact mathematical definitions. If you want pure `eml(x, y) = exp(x) − log y`, restrict `y > 0` in your data and remove the safeguards.
-- **Structure vs constants.** `fit` trains constants only. Structure is whatever the user builds. Automatic structure search (genetic algorithms over tree space) belongs in a separate module, not here.
+- **Structure vs constants.** `fit` and `fit_ep` train constants only. Structure is whatever the user builds. Automatic structure search (genetic algorithms over tree space) belongs in a separate module, not here.
 
 ## What this is not
 
@@ -163,7 +204,9 @@ The goal is a clean substrate for experimenting with the `eml` primitive and tre
 
 ## Background
 
-The `eml` primitive is introduced and motivated in [this paper](https://arxiv.org/pdf/2603.21852v2), which proposes that a single two-argument real function can play a role for continuous mathematics analogous to what NAND plays for Boolean logic. This repository is one concrete, minimal playground for exploring that claim through learning.
+The `eml` primitive is introduced in [this paper](https://arxiv.org/pdf/2603.21852v2), which proposes that a single two-argument real function can play a role for continuous mathematics analogous to what NAND plays for Boolean logic. This repository is one concrete, minimal playground for exploring that claim through learning.
+
+The encoder + predictor design is inspired by [LeWorldModel](https://arxiv.org/pdf/2603.19312v1): an encoder maps observations to a compact latent, a predictor models dynamics in that latent, and an anti-collapse regularizer prevents the trivial constant solution. This library adapts the same skeleton to static tabular data, replacing Vision Transformer + full SIGReg with tree-based encoder + tree-based predictor + a lightweight characteristic-function SIGReg.
 
 ## License
 
