@@ -211,3 +211,46 @@ The encoder + predictor design is inspired by [LeWorldModel](https://arxiv.org/p
 ## License
 
 Apache-2.0
+
+## Demo
+
+```
+============================================================
+Demo 1: single tree (sigmoid recovery)
+============================================================
+  before: (0.5 / (2 + <eml((-x0),0.3)>))
+  R^2    = -1.5974
+  after : (1.006 / (1.206 + <eml((-x0),1.22)>))
+  R^2    = 0.9963
+
+============================================================
+Demo 2: encoder + predictor + SIGReg
+============================================================
+  encoder (initial):
+    z[0] = ((0.5 * x0) + (x1 * x2))
+    z[1] = (1 * x3)
+  predictor (initial): ((1 / (1 + <eml((-x0),1)>)) + (0.5 * x1))
+  latent var (before): [0.207 0.337]
+  SIGReg (before): 0.1047
+  MSE (before): 0.0067
+[fit_ep] step   60  pred 0.0026  sigreg 0.0079  total 0.0030
+[fit_ep] step  120  pred 0.0026  sigreg 0.0071  total 0.0030
+[fit_ep] step  180  pred 0.0026  sigreg 0.0076  total 0.0030
+[fit_ep] step  240  pred 0.0026  sigreg 0.0079  total 0.0030
+[fit_ep] step  300  pred 0.0027  sigreg 0.0059  total 0.0030
+[fit_ep] step  360  pred 0.0026  sigreg 0.0078  total 0.0030
+[fit_ep] step  420  pred 0.0027  sigreg 0.0074  total 0.0030
+[fit_ep] step  480  pred 0.0026  sigreg 0.0077  total 0.0030
+[fit_ep] step  540  pred 0.0026  sigreg 0.0073  total 0.0030
+[fit_ep] step  600  pred 0.0026  sigreg 0.0066  total 0.0030
+
+  encoder (trained):
+    z[0] = ((1.192 * x0) + (x1 * x2))
+    z[1] = (1.582 * x3)
+  predictor (trained): ((1.12 / (1.111 + <eml((-x0),0.9084)>)) + (0.3074 * x1))
+
+  latent var (after): [0.579 0.843]
+  SIGReg (after): 0.0072
+  MSE (after): 0.0026
+  R^2: 0.9757
+```
