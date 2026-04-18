@@ -1,3 +1,4 @@
+
 # eml
 
 Minimal tree-based differentiable symbolic computation in pure numpy.
@@ -129,6 +130,32 @@ MSE(predictor(encoder(X)), y)  +  lambd * SIGReg(encoder(X))
 
 where `SIGReg` pushes the latent distribution toward a standard normal via characteristic-function matching on random 1D projections. This prevents the encoder from collapsing to a constant or low-rank representation.
 
+### Primitives (optional companion library)
+
+Trees can be composed directly, but for repeated use the companion module
+`eml_primitives` provides a small set of named building blocks — in the
+spirit of chemical elements: a few irreducible pieces that combine into
+a vast space of encoders.
+
+```python
+from eml_primitives import linear, sigmoid, interact, saturate, thresh_pos
+
+# Build an encoder by composing primitives
+encoder = T.TreeList([
+    T.add(linear(0), interact(1, 2)),   # z[0] = scale*x0 + x1*x2
+    linear(3),                           # z[1] = scale*x3 + offset
+])
+```
+
+Each primitive carries its own trainable constants. The resulting
+encoder is a regular `TreeList` and trains exactly like any other
+with `fit_ep`. The advantage is readability: after training, the
+learned encoder reads back as a composition of named concepts rather
+than an arbitrary tree.
+
+`eml_primitives` is entirely optional and lives in a separate file.
+It depends on `eml` but `eml` does not depend on it.
+
 ## API
 
 ### Builders
@@ -161,6 +188,19 @@ where `SIGReg` pushes the latent distribution toward a standard normal via chara
 
 `fit` and `fit_ep` return new trees; the caller's trees are not mutated.
 
+### Primitives (in `eml_primitives.py`)
+
+| Function | Meaning |
+|---|---|
+| `linear(i, scale, offset)` | `scale * x_i + offset` |
+| `sigmoid(i, scale)` | bounded `1 / (1 + exp(-scale * x_i))` |
+| `interact(i, j, scale)` | pairwise product `scale * x_i * x_j` |
+| `saturate(i, scale, offset)` | `eml(scale*x_i, offset)` — softplus-like |
+| `thresh_pos(i, scale)` | `exp(scale * x_i)` — positive-region activation |
+
+Composition helpers: `combine_add(a, b, w)`, `combine_mul(a, b)`,
+`combine_plain(a, b)`.
+
 ## Examples
 
 ### Emergent sigmoid
@@ -186,6 +226,24 @@ With the same primitive set, `x² if x > 0 else −x` is recoverable as an `eml(
 
 On synthetic data where the target is `sigmoid(x₀ + x₁·x₂) + 0.5·x₃`, a 4→2→1 encoder+predictor configuration trained with `fit_ep` reaches R² ≈ 0.98. During training the SIGReg term decreases while latent variance grows — the opposite of collapse.
 
+### Primitive-based encoder
+
+The same target `sigmoid(x₀ + x₁·x₂) + 0.5·x₃` can be approached by
+composing primitives rather than writing trees by hand:
+
+```python
+from eml_primitives import linear, interact
+
+encoder = T.TreeList([
+    T.add(linear(0), interact(1, 2)),   # captures the logit
+    linear(3),                           # captures the additive term
+])
+```
+
+After `fit_ep`, this reaches R² ≈ 0.9997. The learned encoder reads
+back as the composition of named primitives with fitted constants,
+keeping the model self-documenting.
+
 ## Design notes
 
 - **Functional API.** Builders return new nodes. Trees are treated as mostly immutable; `fit` and `fit_ep` clone before modifying.
@@ -199,6 +257,9 @@ On synthetic data where the target is `sigmoid(x₀ + x₁·x₂) + 0.5·x₃`, 
 - Not a production deep-learning framework. No GPU, no batching tricks, no fused kernels.
 - Not a symbolic-math library. There is no `simplify`, no symbolic differentiation, no `sympy` integration here. Just numerical gradient and evaluation.
 - Not a genetic-programming library. GA-based structure search is a natural companion but lives elsewhere.
+- Not a fixed architecture framework. Encoders and predictors are
+  user-defined trees, optionally built from the `eml_primitives`
+  companion library.
 
 The goal is a clean substrate for experimenting with the `eml` primitive and tree composition, not to compete with PyTorch or SymPy.
 
